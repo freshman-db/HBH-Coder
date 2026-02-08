@@ -1,0 +1,175 @@
+version: "3.8"
+
+# Happy Coder - Portainer Stacks / Docker Compose
+# 部署组件: happy-server (API) + happy-app (Web) + PostgreSQL + Redis + MinIO (S3)
+#
+# 部署步骤:
+#   1. 在服务器上 clone 项目:  git clone https://github.com/slopus/happy.git && cd happy
+#   2. 复制环境变量:           cp .env.example .env && nano .env
+#   3. 构建镜像:              docker compose build
+#   4. 启动服务:              docker compose up -d
+#   5. 数据库迁移 (首次):      docker compose exec happy-server yarn --cwd packages/happy-server migrate
+#
+# Portainer 部署:
+#   方式 A: Stacks -> Add stack -> Repository -> 填入 Git 仓库地址 -> Deploy
+#   方式 B: 先在服务器上 docker compose build，然后在 Portainer 粘贴此文件 (镜像已在本地)
+
+services:
+
+  # ============================================================
+  # PostgreSQL 数据库
+  # ============================================================
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: handy
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?请设置 POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d handy"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ============================================================
+  # Redis (消息总线 + 缓存)
+  # ============================================================
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: >
+      redis-server
+      --appendonly yes
+      --appendfsync everysec
+      --save 900 1
+      --save 300 10
+      --save 60 10000
+      --maxmemory-policy noeviction
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ============================================================
+  # MinIO (S3 兼容对象存储)
+  # ============================================================
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:?请设置 S3_SECRET_KEY}
+    volumes:
+      - minio_data:/data
+    ports:
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"  # MinIO 管理面板 (可选暴露)
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # MinIO 初始化 - 创建 bucket (仅首次运行)
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    restart: "no"
+    entrypoint: >
+      /bin/sh -c "
+        mc alias set local http://minio:9000 $${S3_ACCESS_KEY} $${S3_SECRET_KEY} &&
+        mc mb -p local/$${S3_BUCKET} || true &&
+        mc anonymous set download local/$${S3_BUCKET}
+      "
+    environment:
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-minioadmin}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:?请设置 S3_SECRET_KEY}
+      S3_BUCKET: ${S3_BUCKET:-happy}
+
+  # ============================================================
+  # Happy Server (后端 API + WebSocket)
+  # ============================================================
+  happy-server:
+    image: happy-server:local
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    ports:
+      - "${SERVER_PORT:-3005}:3005"
+    environment:
+      NODE_ENV: production
+      PORT: "3005"
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@postgres:5432/handy
+      REDIS_URL: redis://redis:6379
+      HANDY_MASTER_SECRET: ${HANDY_MASTER_SECRET:?请设置 HANDY_MASTER_SECRET (JWT/加密密钥)}
+      # S3 / MinIO
+      S3_HOST: minio
+      S3_PORT: "9000"
+      S3_USE_SSL: "false"
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-minioadmin}
+      S3_SECRET_KEY: ${S3_SECRET_KEY}
+      S3_BUCKET: ${S3_BUCKET:-happy}
+      S3_PUBLIC_URL: ${S3_PUBLIC_URL:-http://localhost:9000/happy}
+      # 监控 (可选)
+      METRICS_ENABLED: ${METRICS_ENABLED:-true}
+      METRICS_PORT: "9090"
+      # GitHub 集成 (可选)
+      GITHUB_APP_ID: ${GITHUB_APP_ID:-}
+      GITHUB_PRIVATE_KEY: ${GITHUB_PRIVATE_KEY:-}
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
+      GITHUB_REDIRECT_URI: ${GITHUB_REDIRECT_URI:-}
+      GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-}
+      # Web App URL (GitHub OAuth 回调重定向)
+      WEBAPP_URL: ${WEBAPP_URL:-https://app.happy.engineering}
+      # 语音功能 (可选)
+      ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY:-}
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3005/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  # ============================================================
+  # Happy App (Web 前端 - Nginx 静态服务)
+  # ============================================================
+  happy-app:
+    image: happy-app:local
+    build:
+      context: .
+      dockerfile: Dockerfile.webapp
+    restart: unless-stopped
+    depends_on:
+      - happy-server
+    ports:
+      - "${WEB_PORT:-80}:80"
+    healthcheck:
+      test: ["CMD", "nginx", "-t"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  minio_data:
+    driver: local

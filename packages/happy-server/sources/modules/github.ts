@@ -2,14 +2,29 @@ import { App } from "octokit";
 import { Webhooks } from "@octokit/webhooks";
 import type { EmitterWebhookEvent } from "@octokit/webhooks";
 import { log } from "@/utils/log";
+import { readFileSync, existsSync } from "fs";
 
 let app: App | null = null;
 let webhooks: Webhooks | null = null;
 
+function resolvePrivateKey(): string | null {
+    const value = process.env.GITHUB_PRIVATE_KEY;
+    if (!value) return null;
+
+    // If it looks like a file path, read the file
+    if (existsSync(value)) {
+        return readFileSync(value, 'utf-8');
+    }
+
+    // Otherwise treat as inline key content
+    return value;
+}
+
 export async function initGithub() {
+    const privateKey = resolvePrivateKey();
     if (
         process.env.GITHUB_APP_ID &&
-        process.env.GITHUB_PRIVATE_KEY &&
+        privateKey &&
         process.env.GITHUB_CLIENT_ID &&
         process.env.GITHUB_CLIENT_SECRET &&
         process.env.GITHUB_REDIRECT_URI &&
@@ -17,7 +32,7 @@ export async function initGithub() {
     ) {
         app = new App({
             appId: process.env.GITHUB_APP_ID,
-            privateKey: process.env.GITHUB_PRIVATE_KEY,
+            privateKey,
             webhooks: {
                 secret: process.env.GITHUB_WEBHOOK_SECRET
             }
