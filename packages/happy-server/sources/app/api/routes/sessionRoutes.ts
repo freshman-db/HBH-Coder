@@ -215,6 +215,67 @@ export function sessionRoutes(app: Fastify) {
         });
     });
 
+    // Resume an existing session - reactivate and update metadata
+    app.post('/v1/sessions/:sessionId/resume', {
+        schema: {
+            params: z.object({
+                sessionId: z.string()
+            }),
+            body: z.object({
+                metadata: z.string(),
+                agentState: z.string().nullish()
+            })
+        },
+        preHandler: app.authenticate
+    }, async (request, reply) => {
+        const userId = request.userId;
+        const { sessionId } = request.params;
+        const { metadata, agentState } = request.body;
+
+        // Find the session and verify ownership
+        const session = await db.session.findFirst({
+            where: {
+                id: sessionId,
+                accountId: userId
+            }
+        });
+
+        if (!session) {
+            return reply.code(404).send({ error: 'Session not found' });
+        }
+
+        // Re-activate the session with updated metadata
+        const updatedSession = await db.session.update({
+            where: { id: sessionId },
+            data: {
+                active: true,
+                lastActiveAt: new Date(),
+                metadata: metadata,
+                metadataVersion: { increment: 1 },
+                ...(agentState ? { agentState, agentStateVersion: { increment: 1 } } : {})
+            }
+        });
+
+        log({ module: 'session-resume', sessionId, userId }, `Session resumed: ${sessionId}`);
+
+        return reply.send({
+            session: {
+                id: updatedSession.id,
+                seq: updatedSession.seq,
+                metadata: updatedSession.metadata,
+                metadataVersion: updatedSession.metadataVersion,
+                agentState: updatedSession.agentState,
+                agentStateVersion: updatedSession.agentStateVersion,
+                dataEncryptionKey: updatedSession.dataEncryptionKey ? Buffer.from(updatedSession.dataEncryptionKey).toString('base64') : null,
+                active: updatedSession.active,
+                activeAt: updatedSession.lastActiveAt.getTime(),
+                createdAt: updatedSession.createdAt.getTime(),
+                updatedAt: updatedSession.updatedAt.getTime(),
+                lastMessage: null
+            }
+        });
+    });
+
     // Create or load session by tag
     app.post('/v1/sessions', {
         schema: {

@@ -388,7 +388,8 @@ export async function startDaemon(): Promise<void> {
           const cliPath = join(projectPath(), 'dist', 'index.mjs');
           // Determine agent command - support claude, codex, and gemini
           const agent = options.agent === 'gemini' ? 'gemini' : (options.agent === 'codex' ? 'codex' : 'claude');
-          const fullCommand = `node --no-warnings --no-deprecation ${cliPath} ${agent} --happy-starting-mode remote --started-by daemon`;
+          const resumeArg = options.cliSessionId ? ` --resume ${options.cliSessionId}` : '';
+          const fullCommand = `node --no-warnings --no-deprecation ${cliPath} ${agent} --happy-starting-mode remote --started-by daemon${resumeArg}`;
 
           // Spawn in tmux with environment variables
           // IMPORTANT: Pass complete environment (process.env + extraEnv) because:
@@ -407,6 +408,16 @@ export async function startDaemon(): Promise<void> {
 
           // Add extra environment variables (these should already be filtered)
           Object.assign(tmuxEnv, extraEnv);
+
+          // Add resume session ID for tmux mode
+          if (options.sessionId) {
+            tmuxEnv.HAPPY_RESUME_SESSION_ID = options.sessionId;
+            logger.debug(`[DAEMON RUN] Setting HAPPY_RESUME_SESSION_ID=${options.sessionId} for tmux session reuse`);
+          }
+          if (options.cliSessionId) {
+            tmuxEnv.HAPPY_RESUME_CLI_SESSION_ID = options.cliSessionId;
+            logger.debug(`[DAEMON RUN] Setting HAPPY_RESUME_CLI_SESSION_ID=${options.cliSessionId} for tmux context recovery`);
+          }
 
           const tmuxResult = await tmux.spawnInTmux([fullCommand], {
             sessionName: tmuxSessionName,
@@ -495,15 +506,31 @@ export async function startDaemon(): Promise<void> {
             '--started-by', 'daemon'
           ];
 
-          // TODO: In future, sessionId could be used with --resume to continue existing sessions
-          // For now, we ignore it - each spawn creates a new session
+          // Add --resume if cliSessionId is provided (for session recovery)
+          if (options.cliSessionId) {
+            args.push('--resume', options.cliSessionId);
+            logger.debug(`[DAEMON RUN] Adding --resume ${options.cliSessionId} for session recovery`);
+          }
+
+          // Build resume environment variables
+          const resumeEnv: Record<string, string> = {};
+          if (options.sessionId) {
+            resumeEnv.HAPPY_RESUME_SESSION_ID = options.sessionId;
+            logger.debug(`[DAEMON RUN] Setting HAPPY_RESUME_SESSION_ID=${options.sessionId} for session reuse`);
+          }
+          if (options.cliSessionId) {
+            resumeEnv.HAPPY_RESUME_CLI_SESSION_ID = options.cliSessionId;
+            logger.debug(`[DAEMON RUN] Setting HAPPY_RESUME_CLI_SESSION_ID=${options.cliSessionId} for context recovery`);
+          }
+
           const happyProcess = spawnHappyCLI(args, {
             cwd: directory,
             detached: true,  // Sessions stay alive when daemon stops
             stdio: ['ignore', 'pipe', 'pipe'],  // Capture stdout/stderr for debugging
             env: {
               ...process.env,
-              ...extraEnv
+              ...extraEnv,
+              ...resumeEnv
             }
           });
 

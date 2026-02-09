@@ -66,6 +66,7 @@ export async function runGemini(opts: {
 
   
   const sessionTag = randomUUID();
+  const resumeHappySessionId = process.env.HAPPY_RESUME_SESSION_ID;
 
   // Set backend for offline warnings (before any API calls)
   connectionState.setBackend('Gemini');
@@ -129,7 +130,18 @@ export async function runGemini(opts: {
     machineId,
     startedBy: opts.startedBy
   });
-  const response = await api.getOrCreateSession({ tag: sessionTag, metadata, state });
+  // Create or resume session
+  let response: Awaited<ReturnType<typeof api.getOrCreateSession>>;
+  if (resumeHappySessionId) {
+    logger.debug(`[gemini] Resuming existing Happy session: ${resumeHappySessionId}`);
+    response = await api.resumeSession({ sessionId: resumeHappySessionId, metadata, state });
+    if (!response) {
+      logger.debug(`[gemini] Resume failed, creating new session instead`);
+      response = await api.getOrCreateSession({ tag: sessionTag, metadata, state });
+    }
+  } else {
+    response = await api.getOrCreateSession({ tag: sessionTag, metadata, state });
+  }
 
   // Handle server unreachable case - create offline stub with hot reconnection
   let session: ApiSessionClient;

@@ -137,6 +137,88 @@ export class ApiClient {
   }
 
   /**
+   * Resume an existing session by its ID.
+   * Updates metadata and re-activates the session on the server.
+   */
+  async resumeSession(opts: {
+    sessionId: string,
+    metadata: Metadata,
+    state: AgentState | null
+  }): Promise<Session | null> {
+
+    // Resolve encryption key
+    let encryptionKey: Uint8Array;
+    let encryptionVariant: 'legacy' | 'dataKey';
+    if (this.credential.encryption.type === 'dataKey') {
+      encryptionKey = getRandomBytes(32);
+      encryptionVariant = 'dataKey';
+    } else {
+      encryptionKey = this.credential.encryption.secret;
+      encryptionVariant = 'legacy';
+    }
+
+    try {
+      const response = await axios.post<CreateSessionResponse>(
+        `${configuration.serverUrl}/v1/sessions/${opts.sessionId}/resume`,
+        {
+          metadata: encodeBase64(encrypt(encryptionKey, encryptionVariant, opts.metadata)),
+          agentState: opts.state ? encodeBase64(encrypt(encryptionKey, encryptionVariant, opts.state)) : null,
+        },
+        {
+          headers: {
+            'Authorization': `Bearer ${this.credential.token}`,
+            'Content-Type': 'application/json'
+          },
+          timeout: 60000
+        }
+      );
+
+      logger.debug(`Session resumed: ${response.data.session.id}`);
+      let raw = response.data.session;
+
+      // For resumed sessions, use the existing data encryption key
+      let sessionEncryptionKey = encryptionKey;
+      if (raw.dataEncryptionKey && this.credential.encryption.type === 'dataKey') {
+        // Decrypt the existing data encryption key
+        const encryptedKey = decodeBase64(raw.dataEncryptionKey);
+        // Skip version byte
+        sessionEncryptionKey = new Uint8Array(encryptedKey.slice(1));
+      }
+
+      let session: Session = {
+        id: raw.id,
+        seq: raw.seq,
+        metadata: decrypt(sessionEncryptionKey, encryptionVariant, decodeBase64(raw.metadata)),
+        metadataVersion: raw.metadataVersion,
+        agentState: raw.agentState ? decrypt(sessionEncryptionKey, encryptionVariant, decodeBase64(raw.agentState)) : null,
+        agentStateVersion: raw.agentStateVersion,
+        encryptionKey: sessionEncryptionKey,
+        encryptionVariant: encryptionVariant
+      };
+      return session;
+    } catch (error) {
+      logger.debug('[API] [ERROR] Failed to resume session:', error);
+
+      if (error && typeof error === 'object' && 'code' in error) {
+        const errorCode = (error as any).code;
+        if (isNetworkError(errorCode)) {
+          connectionState.fail({
+            operation: 'Session resume',
+            caller: 'api.resumeSession',
+            errorCode,
+            url: `${configuration.serverUrl}/v1/sessions/${opts.sessionId}/resume`
+          });
+          return null;
+        }
+      }
+
+      // If resume fails (e.g. session deleted), fall back to null
+      logger.debug('[API] Resume failed, will need to create new session');
+      return null;
+    }
+  }
+
+  /**
    * Register or update machine with the server
    * Returns the current machine state from the server with decrypted metadata and daemonState
    */

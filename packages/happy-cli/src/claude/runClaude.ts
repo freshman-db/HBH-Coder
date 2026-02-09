@@ -48,6 +48,7 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
     logger.debug(`[CLAUDE] This is the Claude agent, NOT Gemini`);
     
     const workingDirectory = process.cwd();
+    const resumeHappySessionId = process.env.HAPPY_RESUME_SESSION_ID;
     const sessionTag = randomUUID();
 
     // Log environment info at startup
@@ -101,7 +102,19 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
         lifecycleStateSince: Date.now(),
         flavor: 'claude'
     };
-    const response = await api.getOrCreateSession({ tag: sessionTag, metadata, state });
+    // Create or resume a session
+    let response: Awaited<ReturnType<typeof api.getOrCreateSession>>;
+    if (resumeHappySessionId) {
+        logger.debug(`[START] Resuming existing Happy session: ${resumeHappySessionId}`);
+        response = await api.resumeSession({ sessionId: resumeHappySessionId, metadata, state });
+        if (!response) {
+            // Resume failed (session deleted, etc.) - fall back to creating new session
+            logger.debug(`[START] Resume failed, creating new session instead`);
+            response = await api.getOrCreateSession({ tag: sessionTag, metadata, state });
+        }
+    } else {
+        response = await api.getOrCreateSession({ tag: sessionTag, metadata, state });
+    }
 
     // Handle server unreachable case - run Claude locally with hot reconnection
     // Note: connectionState.notifyOffline() was already called by api.ts with error details

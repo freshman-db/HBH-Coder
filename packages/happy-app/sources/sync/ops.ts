@@ -185,6 +185,40 @@ export async function machineSpawnNewSession(options: SpawnSessionOptions): Prom
 }
 
 /**
+ * Resume a disconnected session by spawning a new CLI process with --resume
+ * to restore conversation context and reuse the same Happy session.
+ */
+export async function machineResumeSession(options: {
+    machineId: string;
+    directory: string;
+    sessionId: string;
+    cliSessionId?: string;
+    agent?: 'codex' | 'claude' | 'gemini';
+}): Promise<SpawnSessionResult> {
+    const { machineId, directory, sessionId, cliSessionId, agent } = options;
+
+    try {
+        const result = await apiSocket.machineRPC<SpawnSessionResult, {
+            type: 'spawn-in-directory';
+            directory: string;
+            sessionId: string;
+            cliSessionId?: string;
+            agent?: 'codex' | 'claude' | 'gemini';
+        }>(
+            machineId,
+            'spawn-happy-session',
+            { type: 'spawn-in-directory', directory, sessionId, cliSessionId, agent }
+        );
+        return result;
+    } catch (error) {
+        return {
+            type: 'error',
+            errorMessage: error instanceof Error ? error.message : 'Failed to resume session'
+        };
+    }
+}
+
+/**
  * Stop the daemon on a specific machine
  */
 export async function machineStopDaemon(machineId: string): Promise<{ message: string }> {

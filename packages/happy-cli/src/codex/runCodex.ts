@@ -79,6 +79,7 @@ export async function runCodex(opts: {
     //
 
     const sessionTag = randomUUID();
+    const resumeHappySessionId = process.env.HAPPY_RESUME_SESSION_ID;
 
     // Set backend for offline warnings (before any API calls)
     connectionState.setBackend('Codex');
@@ -113,7 +114,18 @@ export async function runCodex(opts: {
         machineId,
         startedBy: opts.startedBy
     });
-    const response = await api.getOrCreateSession({ tag: sessionTag, metadata, state });
+    // Create or resume session
+    let response: Awaited<ReturnType<typeof api.getOrCreateSession>>;
+    if (resumeHappySessionId) {
+        logger.debug(`[codex] Resuming existing Happy session: ${resumeHappySessionId}`);
+        response = await api.resumeSession({ sessionId: resumeHappySessionId, metadata, state });
+        if (!response) {
+            logger.debug(`[codex] Resume failed, creating new session instead`);
+            response = await api.getOrCreateSession({ tag: sessionTag, metadata, state });
+        }
+    } else {
+        response = await api.getOrCreateSession({ tag: sessionTag, metadata, state });
+    }
 
     // Handle server unreachable case - create offline stub with hot reconnection
     let session: ApiSessionClient;
@@ -568,6 +580,18 @@ export async function runCodex(opts: {
         let pending: { message: string; mode: EnhancedMode; isolate: boolean; hash: string } | null = null;
         // If we restart (e.g., mode change), use this to carry a resume file
         let nextExperimentalResume: string | null = null;
+
+        // Check for initial resume from daemon spawn (session recovery)
+        const initialResumeSessionId = process.env.HAPPY_RESUME_CLI_SESSION_ID;
+        if (initialResumeSessionId) {
+            const initialResumeFile = findCodexResumeFile(initialResumeSessionId);
+            if (initialResumeFile) {
+                nextExperimentalResume = initialResumeFile;
+                logger.debug(`[Codex] Found initial resume file for session ${initialResumeSessionId}: ${initialResumeFile}`);
+            } else {
+                logger.debug(`[Codex] No resume file found for initial session ${initialResumeSessionId}`);
+            }
+        }
 
         while (!shouldExit) {
             logActiveHandles('loop-top');

@@ -39,6 +39,7 @@ import { fetchFeed } from './apiFeed';
 import { FeedItem } from './feedTypes';
 import { UserProfile } from './friendTypes';
 import { initializeTodoSync } from '../-zen/model/ops';
+import { machineResumeSession } from './ops';
 
 class Sync {
     // Spawned agents (especially in spawn mode) can take noticeable time to connect.
@@ -223,6 +224,35 @@ class Sync {
             return;
         }
 
+        // If session is inactive, try to resume it via daemon
+        if (!session.active && session.metadata) {
+            const machineId = session.metadata.machineId;
+            const directory = session.metadata.path;
+            const cliSessionId = session.metadata.claudeSessionId;
+            const flavor = session.metadata.flavor;
+
+            if (machineId && directory) {
+                log.log(`Session ${sessionId} is inactive, attempting to resume...`);
+                try {
+                    const agent = (flavor === 'codex' ? 'codex' : flavor === 'gemini' ? 'gemini' : 'claude') as 'claude' | 'codex' | 'gemini';
+                    const result = await machineResumeSession({
+                        machineId,
+                        directory,
+                        sessionId,
+                        cliSessionId: cliSessionId || undefined,
+                        agent
+                    });
+                    if (result.type === 'success') {
+                        log.log(`Session ${sessionId} resume initiated, waiting for it to become active...`);
+                    } else {
+                        log.log(`Session ${sessionId} resume failed: ${result.type === 'error' ? result.errorMessage : 'unknown'}`);
+                    }
+                } catch (error) {
+                    log.log(`Session ${sessionId} resume error: ${error}`);
+                }
+            }
+        }
+
         // Read permission mode from session state
         const permissionMode = session.permissionMode || 'default';
         
@@ -284,9 +314,12 @@ class Sync {
             this.applyMessages(sessionId, [normalizedMessage]);
         }
 
-        const ready = await this.waitForAgentReady(sessionId);
+        // Use longer timeout when resuming a session (CLI needs to start + resume context)
+        const isResuming = !session.active;
+        const readyTimeout = isResuming ? 30000 : Sync.SESSION_READY_TIMEOUT_MS;
+        const ready = await this.waitForAgentReady(sessionId, readyTimeout);
         if (!ready) {
-            log.log(`Session ${sessionId} not ready after timeout, sending anyway`);
+            log.log(`Session ${sessionId} not ready after ${readyTimeout}ms timeout, sending anyway`);
         }
 
         // Send message with optional permission mode and source identifier
