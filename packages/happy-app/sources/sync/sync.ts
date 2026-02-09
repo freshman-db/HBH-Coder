@@ -212,7 +212,7 @@ class Sync {
         console.warn(`[sendMessage] called for session=${sessionId}, active check starting`);
 
         // Get encryption
-        const encryption = this.encryption.getSessionEncryption(sessionId);
+        let encryption = this.encryption.getSessionEncryption(sessionId);
         if (!encryption) { // Should never happen
             console.error(`[sendMessage] encryption not found for session ${sessionId}`);
             return;
@@ -251,6 +251,19 @@ class Sync {
                         const active = await this.waitForSessionActive(sessionId, 30000);
                         if (!active) {
                             log.log(`Session ${sessionId} did not become active within 30s, sending message anyway`);
+                        }
+
+                        // CLI generates a new encryption key on resume, so we must
+                        // re-fetch session data to get the updated dataEncryptionKey.
+                        // Without this, the Web App encrypts with the old key while
+                        // the CLI decrypts with the new key, causing silent failures.
+                        this.encryption.removeSessionEncryption(sessionId);
+                        await this.refreshSessions();
+
+                        // Re-read encryption after refresh
+                        const updatedEncryption = this.encryption.getSessionEncryption(sessionId);
+                        if (updatedEncryption) {
+                            encryption = updatedEncryption;
                         }
                     } else {
                         log.log(`Session ${sessionId} resume failed: ${result.type === 'error' ? result.errorMessage : 'unknown'}`);

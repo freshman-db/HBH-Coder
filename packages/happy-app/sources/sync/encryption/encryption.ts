@@ -84,6 +84,20 @@ export class Encryption {
     }
 
     /**
+     * Force-reinitialize a session's encryption with a new key.
+     * Used after session resume when the CLI generates a new dataEncryptionKey.
+     */
+    async reinitializeSessionEncryption(sessionId: string, dataKey: Uint8Array | null): Promise<void> {
+        // Clear old encryption and cached data
+        this.sessionEncryptions.delete(sessionId);
+        this.cache.clearSessionCache(sessionId);
+
+        const encryptor = await this.openEncryption(dataKey);
+        const sessionEnc = new SessionEncryption(sessionId, encryptor, this.cache);
+        this.sessionEncryptions.set(sessionId, sessionEnc);
+    }
+
+    /**
      * Get session encryption if it has been initialized
      * Returns null if not initialized (should never happen in normal flow)
      */
