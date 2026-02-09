@@ -209,20 +209,23 @@ class Sync {
 
 
     async sendMessage(sessionId: string, text: string, displayText?: string) {
+        console.warn(`[sendMessage] called for session=${sessionId}, active check starting`);
 
         // Get encryption
         const encryption = this.encryption.getSessionEncryption(sessionId);
         if (!encryption) { // Should never happen
-            console.error(`Session ${sessionId} not found`);
+            console.error(`[sendMessage] encryption not found for session ${sessionId}`);
             return;
         }
 
         // Get session data from storage
         const session = storage.getState().sessions[sessionId];
         if (!session) {
-            console.error(`Session ${sessionId} not found in storage`);
+            console.error(`[sendMessage] session ${sessionId} not found in storage`);
             return;
         }
+
+        console.warn(`[sendMessage] session.active=${session.active}, metadata=${!!session.metadata}, machineId=${session.metadata?.machineId}`);
 
         // If session is inactive, try to resume it via daemon
         if (!session.active && session.metadata) {
@@ -231,7 +234,7 @@ class Sync {
             const cliSessionId = session.metadata.claudeSessionId;
             const flavor = session.metadata.flavor;
             if (machineId && directory) {
-                log.log(`Session ${sessionId} is inactive, attempting to resume...`);
+                console.warn(`[sendMessage] resuming session: machineId=${machineId}, dir=${directory}`);
                 try {
                     const agent = (flavor === 'codex' ? 'codex' : flavor === 'gemini' ? 'gemini' : 'claude') as 'claude' | 'codex' | 'gemini';
                     const result = await machineResumeSession({
@@ -241,14 +244,17 @@ class Sync {
                         cliSessionId: cliSessionId || undefined,
                         agent
                     });
+                    console.warn(`[sendMessage] resume result: ${JSON.stringify(result)}`);
                     if (result.type === 'success') {
                         log.log(`Session ${sessionId} resume initiated, waiting for it to become active...`);
                     } else {
                         log.log(`Session ${sessionId} resume failed: ${result.type === 'error' ? result.errorMessage : 'unknown'}`);
                     }
                 } catch (error) {
-                    log.log(`Session ${sessionId} resume error: ${error}`);
+                    console.warn(`[sendMessage] resume error: ${error}`);
                 }
+            } else {
+                console.warn(`[sendMessage] cannot resume: machineId=${machineId}, directory=${directory}`);
             }
         }
 
