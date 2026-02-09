@@ -1,5 +1,3 @@
-version: "3.8"
-
 # Happy Coder - Portainer Stacks / Docker Compose
 # 部署组件: happy-server (API) + happy-app (Web) + PostgreSQL + Redis + MinIO (S3)
 #
