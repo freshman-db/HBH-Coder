@@ -1494,6 +1494,7 @@ class Sync {
         // Subscribe to connection state changes
         apiSocket.onReconnected(() => {
             log.log('🔌 Socket reconnected');
+            this.profileSync.invalidate();
             this.sessionsSync.invalidate();
             this.machinesSync.invalidate();
             log.log('🔌 Socket reconnected: Invalidating artifacts sync');
