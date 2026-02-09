@@ -247,6 +247,11 @@ class Sync {
                     console.warn(`[sendMessage] resume result: ${JSON.stringify(result)}`);
                     if (result.type === 'success') {
                         log.log(`Session ${sessionId} resume initiated, waiting for it to become active...`);
+                        // Wait for the session to actually become active (CLI connected and joined room)
+                        const active = await this.waitForSessionActive(sessionId, 30000);
+                        if (!active) {
+                            log.log(`Session ${sessionId} did not become active within 30s, sending message anyway`);
+                        }
                     } else {
                         log.log(`Session ${sessionId} resume failed: ${result.type === 'error' ? result.errorMessage : 'unknown'}`);
                     }
@@ -319,12 +324,13 @@ class Sync {
             this.applyMessages(sessionId, [normalizedMessage]);
         }
 
-        // Use longer timeout when resuming a session (CLI needs to start + resume context)
-        const isResuming = !session.active;
-        const readyTimeout = isResuming ? 30000 : Sync.SESSION_READY_TIMEOUT_MS;
-        const ready = await this.waitForAgentReady(sessionId, readyTimeout);
-        if (!ready) {
-            log.log(`Session ${sessionId} not ready after ${readyTimeout}ms timeout, sending anyway`);
+        // For non-resume scenarios, wait for agent to be ready (agentStateVersion > 0)
+        // For resume scenarios, we already waited for session.active in the resume block above
+        if (session.active) {
+            const ready = await this.waitForAgentReady(sessionId, Sync.SESSION_READY_TIMEOUT_MS);
+            if (!ready) {
+                log.log(`Session ${sessionId} not ready after ${Sync.SESSION_READY_TIMEOUT_MS}ms timeout, sending anyway`);
+            }
         }
 
         // Send message with optional permission mode and source identifier
@@ -2090,6 +2096,40 @@ class Sync {
                 voiceHooks.onSessionOnline(s.id, s.metadata ?? undefined);
             }
         }
+    }
+
+    /**
+     * Waits for a session to become active after a resume request.
+     *
+     * After the daemon spawns a new CLI process for a resumed session,
+     * the CLI connects its WebSocket and joins the session room. The server
+     * then marks the session as active and broadcasts an update. This method
+     * watches for that transition to ensure messages are only sent after
+     * the CLI is connected and ready to receive them.
+     */
+    private waitForSessionActive(sessionId: string, timeoutMs: number): Promise<boolean> {
+        const startedAt = Date.now();
+
+        return new Promise((resolve) => {
+            const done = (active: boolean, reason: string) => {
+                clearTimeout(timeout);
+                unsubscribe();
+                const duration = Date.now() - startedAt;
+                log.log(`Session ${sessionId} ${reason} after ${duration}ms`);
+                resolve(active);
+            };
+
+            const check = () => {
+                const s = storage.getState().sessions[sessionId];
+                if (s && s.active) {
+                    done(true, `became active`);
+                }
+            };
+
+            const timeout = setTimeout(() => done(false, 'active wait timed out'), timeoutMs);
+            const unsubscribe = storage.subscribe(check);
+            check();
+        });
     }
 
     /**

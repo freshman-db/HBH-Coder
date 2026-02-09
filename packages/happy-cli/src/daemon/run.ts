@@ -388,7 +388,11 @@ export async function startDaemon(): Promise<void> {
           const cliPath = join(projectPath(), 'dist', 'index.mjs');
           // Determine agent command - support claude, codex, and gemini
           const agent = options.agent === 'gemini' ? 'gemini' : (options.agent === 'codex' ? 'codex' : 'claude');
-          const resumeArg = options.cliSessionId ? ` --resume ${options.cliSessionId}` : '';
+          // Codex uses subcommand format: `codex resume <id>`
+          // Claude/Gemini use flag format: `claude --resume <id>`
+          const resumeArg = options.cliSessionId
+            ? (agent === 'codex' ? ` resume ${options.cliSessionId}` : ` --resume ${options.cliSessionId}`)
+            : '';
           const fullCommand = `node --no-warnings --no-deprecation ${cliPath} ${agent} --happy-starting-mode remote --started-by daemon${resumeArg}`;
 
           // Spawn in tmux with environment variables
@@ -506,10 +510,16 @@ export async function startDaemon(): Promise<void> {
             '--started-by', 'daemon'
           ];
 
-          // Add --resume if cliSessionId is provided (for session recovery)
+          // Add resume arg if cliSessionId is provided (for session recovery)
+          // Codex uses subcommand format: `codex resume <id>`
+          // Claude/Gemini use flag format: `claude --resume <id>`
           if (options.cliSessionId) {
-            args.push('--resume', options.cliSessionId);
-            logger.debug(`[DAEMON RUN] Adding --resume ${options.cliSessionId} for session recovery`);
+            if (options.agent === 'codex') {
+              args.push('resume', options.cliSessionId);
+            } else {
+              args.push('--resume', options.cliSessionId);
+            }
+            logger.debug(`[DAEMON RUN] Adding resume ${options.cliSessionId} for session recovery (agent=${options.agent})`);
           }
 
           // Build resume environment variables
