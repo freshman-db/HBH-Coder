@@ -223,14 +223,15 @@ export function sessionRoutes(app: Fastify) {
             }),
             body: z.object({
                 metadata: z.string(),
-                agentState: z.string().nullish()
+                agentState: z.string().nullish(),
+                dataEncryptionKey: z.string().nullish()
             })
         },
         preHandler: app.authenticate
     }, async (request, reply) => {
         const userId = request.userId;
         const { sessionId } = request.params;
-        const { metadata, agentState } = request.body;
+        const { metadata, agentState, dataEncryptionKey } = request.body;
 
         // Find the session and verify ownership
         const session = await db.session.findFirst({
@@ -252,7 +253,8 @@ export function sessionRoutes(app: Fastify) {
                 lastActiveAt: new Date(),
                 metadata: metadata,
                 metadataVersion: { increment: 1 },
-                ...(agentState ? { agentState, agentStateVersion: { increment: 1 } } : {})
+                ...(agentState ? { agentState, agentStateVersion: { increment: 1 } } : {}),
+                ...(dataEncryptionKey ? { dataEncryptionKey: Buffer.from(dataEncryptionKey, 'base64') } : {})
             }
         });
 

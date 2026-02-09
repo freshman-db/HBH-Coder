@@ -147,11 +147,18 @@ export class ApiClient {
   }): Promise<Session | null> {
 
     // Resolve encryption key
+    let dataEncryptionKey: Uint8Array | null = null;
     let encryptionKey: Uint8Array;
     let encryptionVariant: 'legacy' | 'dataKey';
     if (this.credential.encryption.type === 'dataKey') {
       encryptionKey = getRandomBytes(32);
       encryptionVariant = 'dataKey';
+
+      // Generate new dataEncryptionKey so web app can decrypt with the new key
+      let encryptedDataKey = libsodiumEncryptForPublicKey(encryptionKey, this.credential.encryption.publicKey);
+      dataEncryptionKey = new Uint8Array(encryptedDataKey.length + 1);
+      dataEncryptionKey.set([0], 0); // Version byte
+      dataEncryptionKey.set(encryptedDataKey, 1); // Data key
     } else {
       encryptionKey = this.credential.encryption.secret;
       encryptionVariant = 'legacy';
@@ -163,6 +170,7 @@ export class ApiClient {
         {
           metadata: encodeBase64(encrypt(encryptionKey, encryptionVariant, opts.metadata)),
           agentState: opts.state ? encodeBase64(encrypt(encryptionKey, encryptionVariant, opts.state)) : null,
+          dataEncryptionKey: dataEncryptionKey ? encodeBase64(dataEncryptionKey) : undefined,
         },
         {
           headers: {
@@ -176,14 +184,9 @@ export class ApiClient {
       logger.debug(`Session resumed: ${response.data.session.id}`);
       let raw = response.data.session;
 
-      // For resumed sessions, use the existing data encryption key
+      // For resumed sessions, we just sent metadata encrypted with our new encryptionKey,
+      // so the server returns metadata encrypted with that same key. No need to use old dataEncryptionKey.
       let sessionEncryptionKey = encryptionKey;
-      if (raw.dataEncryptionKey && this.credential.encryption.type === 'dataKey') {
-        // Decrypt the existing data encryption key
-        const encryptedKey = decodeBase64(raw.dataEncryptionKey);
-        // Skip version byte
-        sessionEncryptionKey = new Uint8Array(encryptedKey.slice(1));
-      }
 
       let session: Session = {
         id: raw.id,
@@ -195,6 +198,13 @@ export class ApiClient {
         encryptionKey: sessionEncryptionKey,
         encryptionVariant: encryptionVariant
       };
+
+      // If metadata decryption failed, the session is unusable
+      if (!session.metadata) {
+        logger.debug('[API] [ERROR] Failed to decrypt resumed session metadata, returning null to trigger new session creation');
+        return null;
+      }
+
       return session;
     } catch (error) {
       logger.debug('[API] [ERROR] Failed to resume session:', error);

@@ -266,7 +266,8 @@ export const CreateSessionResponseSchema = z.object({
     metadata: z.string(),
     metadataVersion: z.number(),
     agentState: z.string().nullable(),
-    agentStateVersion: z.number()
+    agentStateVersion: z.number(),
+    dataEncryptionKey: z.string().nullable().optional()
   })
 })
 

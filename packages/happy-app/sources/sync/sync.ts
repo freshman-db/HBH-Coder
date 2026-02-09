@@ -230,7 +230,6 @@ class Sync {
             const directory = session.metadata.path;
             const cliSessionId = session.metadata.claudeSessionId;
             const flavor = session.metadata.flavor;
-
             if (machineId && directory) {
                 log.log(`Session ${sessionId} is inactive, attempting to resume...`);
                 try {
