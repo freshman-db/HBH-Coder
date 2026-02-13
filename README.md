@@ -34,6 +34,25 @@ npm install -g happy-coder
 ```
 
 <h3 align="center">
+Run From Source (Repo Checkout)
+</h3>
+
+```bash
+# from repository root
+yarn cli --help
+yarn cli codex
+```
+
+<h3 align="center">
+Release (Maintainers)
+</h3>
+
+```bash
+# from repository root
+yarn release
+```
+
+<h3 align="center">
 Step 3: Start using `happy` instead of `claude` or `codex`
 </h3>
 
@@ -69,6 +88,7 @@ On your computer, run `happy` instead of `claude` or `happy codex` instead of `c
 
 - **[Happy App](https://github.com/slopus/happy/tree/main/packages/happy-app)** - Web UI + mobile client (Expo)
 - **[Happy CLI](https://github.com/slopus/happy/tree/main/packages/happy-cli)** - Command-line interface for Claude Code and Codex
+- **[Happy Agent](https://github.com/slopus/happy/tree/main/packages/happy-agent)** - Remote agent control CLI (create, send, monitor sessions)
 - **[Happy Server](https://github.com/slopus/happy/tree/main/packages/happy-server)** - Backend server for encrypted sync
 
 ## 🏠 Who We Are

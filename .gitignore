@@ -49,3 +49,5 @@ CLAUDE.local.md
 # Development planning notes (keep local, don't commit)
 notes/
 .playwright-mcp/*.png
+# ralphex progress logs
+progress*.txt
